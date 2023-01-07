@@ -1,3 +1,4 @@
 /lib
 .vscode/
 secrets.py
+/sounds

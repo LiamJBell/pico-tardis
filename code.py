@@ -1,20 +1,13 @@
-import time
 import audiobusio
-import board
-import pwmio
-import wifi, socketpool, ampule
+import board, os, pwmio, asyncio
+import wifi, socketpool
+from adafruit_httpserver.server import HTTPServer
+from adafruit_httpserver.response import HTTPResponse
 from adafruit_itertools import chain
 from audiomp3 import MP3Decoder
-import asyncio
 
 audio = audiobusio.I2SOut(board.GP10, board.GP11, board.GP9)
 pwm = pwmio.PWMOut(board.GP17)
-
-
-@ampule.route("/")
-def handleTardisCommand(request, command):
-    print("received request")
-    playSound()
 
 async def selectSound():
     # do sound selection stuff
@@ -40,19 +33,6 @@ async def light():
             pwm.duty_cycle = i*i
             await asyncio.sleep(0.004)
 
-async def startAmpule():
-    print("Starting Ampule...")
-    pool = socketpool.SocketPool(wifi.radio)
-    socket = pool.socket()
-    socket.bind(['0.0.0.0', 80])
-    print("Bound socket")
-    socket.listen(10)
-    print("Socket listening")
-
-    while True:
-        ampule.listen(socket)
-
-
 async def connectToWiFi():    
     try:
         from secrets import secrets
@@ -66,9 +46,8 @@ async def connectToWiFi():
 
 async def main():
     wifi = asyncio.create_task(connectToWiFi())
-    server = asyncio.create_task(startAmpule())
     
-    await asyncio.gather(wifi, server)
+    await asyncio.gather(wifi)
 
 
 
