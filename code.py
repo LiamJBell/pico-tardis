@@ -8,26 +8,26 @@ from adafruit_itertools import chain
 from audiomp3 import MP3Decoder
 import microcontroller
 
-audio = audiobusio.I2SOut(board.GP10, board.GP11, board.GP9)
+audio = audiobusio.I2SOut(board.GP10, board.GP11, board.GP9) #BCLK_PIN, WS_PIN, SDIN_PIN
 server = HTTPServer(socketpool.SocketPool(wifi.radio))
 board_led = digitalio.DigitalInOut(board.LED)
 board_led.direction = digitalio.Direction.OUTPUT
 
 TARDIS_COMMANDS = ["demat", "mat", "flight", "cloister", "quickdemat", "quickmat", ]
 
-async def selectSound(command):
+def selectSound(command):
     """Takes string command and checks if it is in `TARDIS_COMMANDS`, returning the path to the `.mp3` file if True
     """
     if command not in TARDIS_COMMANDS:
         return False
     return "sounds/%s.mp3" % command
 
-async def playSound(sound):
+def playSound(sound):
     """Play the given sound and run the lamp 
     :param sound: the path to the audio file to be played
     """
     if audio.playing:
-        return False
+        return None
     else:
         audio.play(MP3Decoder(sound))
         asyncio.run(light())
@@ -55,11 +55,11 @@ def handleTardisCommand(request):
     """
     command = request.query_params.get("a")
     response = HTTPResponse(request)
-    sound = asyncio.run(selectSound(command))
+    sound = selectSound(command)
     if sound:
         body = "OK"
         response.status=HTTPStatus(200, "OK")
-        if not asyncio.run(playSound(sound)):
+        if playSound(sound) is None:
             body = "Sound already playing, please wait"
             response.status=HTTPStatus(503, "Busy")
     else:
