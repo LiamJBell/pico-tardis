@@ -1,18 +1,19 @@
+import ipaddress
+import time
 import audiobusio
 import board, os, pwmio, asyncio, digitalio
-import wifi, socketpool
-from adafruit_httpserver.server import HTTPServer
-from adafruit_httpserver.response import HTTPResponse
-from adafruit_httpserver.status import HTTPStatus
+import wifi, socketpool, ssl
 from adafruit_itertools import chain
+import adafruit_minimqtt.adafruit_minimqtt as MQTT
 from audiomp3 import MP3Decoder
-import microcontroller
+from secrets import secrets
 
-server = HTTPServer(socketpool.SocketPool(wifi.radio))
 # IO setup
 board_led = digitalio.DigitalInOut(board.LED)
 board_led.direction = digitalio.Direction.OUTPUT
+board_led.value=True
 lamp = pwmio.PWMOut(board.GP17)
+
 
 #Fetch list of sounds to be played
 sounds = os.listdir("sounds")
@@ -30,7 +31,7 @@ def playSound(sound, playLight=True):
     """Play the given sound and run the lamp 
     :param sound: the path to the audio file to be played
     """
-    with audiobusio.I2SOut(board.GP10, board.GP11, board.GP9) as audio:#BCLK_PIN, WS_PIN, SDIN_PIN
+    with audiobusio.I2SOut(board.GP10, board.GP11, board.GP9) as audio:#BCLK_PIN, LRC_PIN, SDIN_PIN
         if audio.playing:
             return False
         else:
@@ -38,10 +39,10 @@ def playSound(sound, playLight=True):
             audio.play(decoder)
             while audio.playing:
                 if playLight:
-                    asyncio.run(light())
+                    light()
             return True
 
-async def light():
+def light():
     """
     PWM pulse LED for duration of audio file currently playing
     """
@@ -49,80 +50,93 @@ async def light():
     max = 255
     min = 0
     if first_run:
-        await asyncio.sleep(3)  
+        time.sleep(3)  
         for i in range(min, max, 1):
             lamp.duty_cycle=i*i
-            await asyncio.sleep(0.003)
-        first_run = False
+            time.sleep(0.003)
+        first_run=False
     for i in chain(range(max, min, -1), range(min, max, 1)):
         lamp.duty_cycle = i*i
-        await asyncio.sleep(0.003)
-
-@server.route("/command")
-def handleTardisCommand(request):
-    """
-    Ingests a parameter from the HTTP request, asks for the file path to the relevant sound and tells the 
-    TARDIS to run the sound
-    :param request: the HTTPRequest coming from the client. This should contain a paramater called `sound` and `light` containing
-    a command for the TARDIS to execute
-    """
-    sound = request.query_params.get("sound")
-    light = request.query_params.get("light")
-    response = HTTPResponse(request)
-    if light is not bool:
-        light = False
-    sound = selectSound(sound)
-    if sound is not None:
-        body = "OK"
-        response.status=HTTPStatus(200, "Playing {}. Light flashing: {}".format(sound, light))
-        response.send(body)
-        playSound(sound, light)
-        if light:
-            pass
-        # The below If statement is currently pointless because CircuitPython cannot properly work asynchronously on a Pico, so the check is irrelevant
-        # if not playSound(sound):
-        #     body = "Sound already playing, please wait"
-        #     response.status=HTTPStatus(503, "Busy")
-    else:
-        body = "Invalid parameter"
-        response.status=HTTPStatus(400, "Bad Request")
-        response.send(body)
-
-async def connectToWiFi():  
-    wifi.radio.hostname="TARDIS"
-    wifi.radio.connect(os.getenv("CIRCUITPY_WIFI_SSID"), os.getenv("CIRCUITPY_WIFI_PASSWORD"))
-    print("Connected to WiFi %s on IP:" % os.getenv("CIRCUITPY_WIFI_SSID"), wifi.radio.ipv4_address)
-
-async def startHTTPServer():
-    try:
-        server.start(str(wifi.radio.ipv4_address))
-        board_led.value = True
-        print("listening on:%s" % wifi.radio.ipv4_address)
-    except OSError as e:
-        print("Error starting server, restarting...\n{}".format(e))
-        asyncio.sleep(5)
-        microcontroller.reset()
+        time.sleep(0.003)
     
-async def loop():
+def initMqtt():    
+    global mqtt_client
+    broker = ipaddress.IPv4Address(secrets["mqtt_broker_hostname"])
+    while wifi.radio.ping(broker) is None:
+        print("Broker unavailable")
+        time.sleep(1)
+    pool = socketpool.SocketPool(wifi.radio)
+    mqtt_client = MQTT.MQTT(
+        client_id=secrets["hostname"],
+        username = secrets["mqtt_username"],
+        password = secrets['mqtt_password'],
+        broker=secrets["mqtt_broker_hostname"],
+        socket_pool=pool,
+        port=secrets["mqtt_broker_port"],
+        socket_timeout=5,
+        connect_retries=10
+    )
+    mqtt_client.on_connect = connect
+    mqtt_client.on_disconnect = disconnect
+    mqtt_client.on_subscribe = subscribe
+    mqtt_client.on_unsubscribe = unsubscribe
+    mqtt_client.on_publish = publish
+    mqtt_client.on_message = message
+    mqtt_client.connect()
+    mqtt_client.subscribe("tardis")
+
+def connectToWiFi():  
+    wifi.radio.enabled = False
+    wifi.radio.enabled = True
+    wifi.radio.hostname="TARDIS"
+    wifi.radio.connect(secrets["wifi_ssid"], secrets["wifi_pw"])
+
+def loop():
+    global mqtt_client
     global first_run
+    
     first_run=True
     if first_run:
-        pass
-        # playSound(selectSound("startup"))
+        playSound(selectSound("startup"))
+        first_run = False
     while True:
-        server.poll()
+        mqtt_client.loop()
+        
+def connect(mqtt_client, userdata, flags, rc):
+    print("Connected to MQTT Broker\n Flags: {0}\nRC:{1}".format(flags, rc))
 
-async def main():
+def disconnect(mqtt_client, userdata, rc):
+    print("Disconnected from MQTT Broker")
+
+def subscribe(mqtt_client, userdata, topic, granted_qos):
+    print("Subscribed to {0} with QOS level {1}".format(topic, granted_qos))
+    
+def unsubscribe(mqtt_client, userdata, topic, pid):
+    print("Unsubscribed from {0} with PID {1}".format(topic, pid))
+    
+def publish(mqtt_client, userdata, topic, pid):
+    print("Published to {0} with PID {1}".format(topic, pid))
+    
+def message(client, topic, message):
+    print("New message on topic {0}: {1}".format(topic, message))
+    light = True
+    sound = selectSound(message)
+    if sound is None:
+        return  #Throw some sort of error at the publisher?
+    elif sound == "cloister.mp3":
+        light = False
+    playSound(selectSound(message))
+
+def main():
     global decoder
-    wifi = asyncio.create_task(connectToWiFi())
-    startServer = asyncio.create_task(startHTTPServer())
-    asyncio.gather(wifi, startServer)
+    connectToWiFi()
+    initMqtt()
     decoder = MP3Decoder(open("/sounds/startup.mp3", "rb")) #Opening a MP3Decoder takes up a lot of memory, so we do it here to save the precious KBs during runtime
-
-    asyncio.run(loop()) #Run server.poll() on a permanent loop until we crash, switch off or are interrupted
+    
+    loop()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
 
 
 
