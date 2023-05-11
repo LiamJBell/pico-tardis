@@ -1,3 +1,3 @@
 # pico-tardis
 
-Simple web server application that listens for commands to play sounds and run a LED in a 3D printed TARDIS
+MQTT Client that controls a lovely little 3D printed Police Box from the British sci-fi show Doctor Who
