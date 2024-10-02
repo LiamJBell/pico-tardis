@@ -1,5 +1,5 @@
-/lib
-.vscode/
-secrets.py
+/.vscode
+/System Volume Information
+/boot_out.txt
 /sounds
-*.code-workspace
+/lib

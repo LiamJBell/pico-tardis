@@ -1,8 +1,7 @@
 import ipaddress
 import time
-import audiobusio
-import board, os, pwmio, asyncio, digitalio
-import wifi, socketpool, ssl
+import board, os, pwmio, digitalio, audiobusio
+import wifi, socketpool
 from adafruit_itertools import chain
 import adafruit_minimqtt.adafruit_minimqtt as MQTT
 from audiomp3 import MP3Decoder
@@ -17,6 +16,7 @@ lamp = pwmio.PWMOut(board.GP17)
 
 #Fetch list of sounds to be played
 sounds = os.listdir("sounds")
+print(sounds)
 
 def selectSound(command):
     """Takes string command and checks if it is in `sounds`, returning the path to the `.mp3` file if True
@@ -31,6 +31,7 @@ def playSound(sound, playLight=True):
     """Play the given sound and run the lamp 
     :param sound: the path to the audio file to be played
     """
+    print("Playing sound: ", sound)
     with audiobusio.I2SOut(board.GP10, board.GP11, board.GP9) as audio:#BCLK_PIN, LRC_PIN, SDIN_PIN
         if audio.playing:
             return False
@@ -46,18 +47,18 @@ def light():
     """
     PWM pulse LED for duration of audio file currently playing
     """
-    global first_run
+    # global first_run
     max = 255
     min = 0
-    if first_run:
-        time.sleep(3)  
-        for i in range(min, max, 1):
-            lamp.duty_cycle=i*i
-            time.sleep(0.003)
-        first_run=False
+    # if first_run:
+    #     time.sleep(3)  
+    #     for i in range(min, max, 1):
+    #         lamp.duty_cycle=i*i
+    #         time.sleep(0.003)
+    #     first_run=False
     for i in chain(range(max, min, -1), range(min, max, 1)):
         lamp.duty_cycle = i*i
-        time.sleep(0.003)
+        time.sleep(0.006)
     
 def initMqtt():    
     global mqtt_client
@@ -88,19 +89,24 @@ def initMqtt():
 def connectToWiFi():  
     wifi.radio.enabled = False
     wifi.radio.enabled = True
-    wifi.radio.hostname="TARDIS"
+    wifi.radio.hostname="Type40TTCapsule"
+    wifi.radio.ipv4_dns=ipaddress.ip_address(secrets["dns_server"])
     wifi.radio.connect(secrets["wifi_ssid"], secrets["wifi_pw"])
+    
 
 def loop():
     global mqtt_client
     global first_run
+    global ups
     
-    first_run=True
-    if first_run:
-        playSound(selectSound("startup"))
-        first_run = False
+    # first_run=True
+    # if first_run:
+    #     playSound(selectSound("startup"))
+    #     first_run = False
     while True:
-        mqtt_client.loop()
+        mqtt_client.loop()    
+        time.sleep(5)
+
         
 def connect(mqtt_client, userdata, flags, rc):
     print("Connected to MQTT Broker\n Flags: {0}\nRC:{1}".format(flags, rc))
@@ -128,12 +134,15 @@ def message(client, topic, message):
     playSound(selectSound(message))
 
 def main():
+    print("Booting up TARDIS") # Debug
     global decoder
-    connectToWiFi()
-    initMqtt()
+    connectToWiFi() # Connect to WiFi
+    initMqtt()  # Start the MQTT Client
     decoder = MP3Decoder(open("/sounds/startup.mp3", "rb")) #Opening a MP3Decoder takes up a lot of memory, so we do it here to save the precious KBs during runtime
-    
-    loop()
+    global ups  
+    # i2c = busio.I2C(board.GP7, board.GP6) 
+    # ups = adafruit_ina219.INA219(i2c, 0x43)
+    loop() # Begin main loop
 
 if __name__ == "__main__":
     main()
@@ -142,3 +151,4 @@ if __name__ == "__main__":
 
 
 
+ # type: ignore
